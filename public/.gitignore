@@ -1,0 +1,6 @@
+node_modules
+uploads
+sessions.sqlite
+database.sqlite
+*.db
+*.sqlite
