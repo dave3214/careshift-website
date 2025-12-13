@@ -11,7 +11,6 @@ const db = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-
 // Ensure uploads folder exists
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -29,7 +28,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-
 // View engine setup
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -46,7 +44,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(
   session({
     store: new SQLiteStore({ db: 'sessions.sqlite' }),
-    secret: 'CHANGE_THIS_SECRET', // change this to something random
+    secret: 'CHANGE_THIS_SECRET', // change this in real projects
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -68,20 +66,17 @@ function requireLogin(req, res, next) {
   }
   next();
 }
-function diffMinutes(later, earlier) {
-  return Math.round((later - earlier) / 60000);
-}
-// ========================================================
-// Worker: My Shifts (GET + POST) – make sure this exists
-// ========================================================
 
-// My Shifts page (protected) - worker view
+/* ========================================================
+   WORKER: MY SHIFTS + ATTENDANCE + STATUS
+   ======================================================== */
+
 // Worker "My shifts" page
 app.get('/my-shifts', requireLogin, (req, res) => {
   const user = req.session.user;
 
-  if (user.role !== 'staff' && user.role !== 'worker' && user.role !== 'nurse') {
-    // just in case, only workers use this page
+  // Only worker-type roles use this page
+  if (!['staff', 'worker', 'nurse'].includes(user.role)) {
     return res.redirect('/dashboard');
   }
 
@@ -102,7 +97,7 @@ app.get('/my-shifts', requireLogin, (req, res) => {
 
   db.all(sql, [user.id], (err, rows) => {
     if (err) {
-      console.error(err);
+      console.error('Error loading worker shifts', err);
       return res.render('my-shifts', {
         user,
         shifts: [],
@@ -112,171 +107,92 @@ app.get('/my-shifts', requireLogin, (req, res) => {
 
     res.render('my-shifts', {
       user,
-      shifts: rows,
+      shifts: rows || [],
       error: null,
     });
   });
 });
+
 // Worker: clock in to a shift
 app.post('/shifts/:id/clock-in', requireLogin, (req, res) => {
-  const shiftId = req.params.id;
-  const userId = req.session.user.id;
-  const now = new Date().toISOString();
-
-  // Try to record a clock-in time; if column doesn't exist, it will just log an error
-  const sql = `
-    UPDATE shifts
-    SET clock_in_time = COALESCE(clock_in_time, ?)
-    WHERE id = ? AND user_id = ?
-  `;
-
-  db.run(sql, [now, shiftId, userId], function (err) {
-    if (err) {
-      console.error('Error clocking in for shift', err);
-      // Optional: you can set a flash message here if you have flash support
-      // req.session.flash = { type: 'error', message: 'Could not clock in for this shift.' };
-    } else {
-      // Optional success flash message
-      // req.session.flash = { type: 'success', message: 'Clock-in recorded.' };
-    }
-
-    // Always send them back to My Shifts
-    res.redirect('/my-shifts');
-  });
-});
-
-// Clock in to a shift
-app.post('/shifts/:id/clock-in', requireLogin, (req, res) => {
   const user = req.session.user;
   const shiftId = req.params.id;
-  const reasonFromForm = (req.body.reason || '').trim();
+  const nowIso = new Date().toISOString();
 
-  const now = new Date();
-  const nowIso = now.toISOString();
-
-  const sqlShift = 'SELECT * FROM shifts WHERE id = ? AND user_id = ?';
-  db.get(sqlShift, [shiftId, user.id], (err, shift) => {
-    if (err || !shift) {
-      console.error(err);
-      return res.redirect('/my-shifts');
-    }
-
-    // build scheduled start Date from date + start_time (simple version)
-    const scheduledStart = new Date(`${shift.date}T${shift.start_time}:00`);
-
-    const minutesLate = diffMinutes(now, scheduledStart); // positive if late
-    const needsReason = minutesLate > 15;
-
-    // If they are late and haven't given a reason yet, show reason form
-    if (needsReason && !reasonFromForm) {
-      return res.render('shift-reason', {
-        user,
-        shift,
-        action: 'clock-in',
-        error: null,
-      });
-    }
-
-    const clockInReason = needsReason ? reasonFromForm : null;
-
-    // Check if we already have an attendance row
-    db.get(
-      'SELECT id FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
-      [shiftId, user.id],
-      (err2, existing) => {
-        if (err2) {
-          console.error(err2);
-          return res.redirect('/my-shifts');
-        }
-
-        if (existing) {
-          db.run(
-            'UPDATE shift_attendance SET clock_in = ?, clock_in_reason = ? WHERE id = ?',
-            [nowIso, clockInReason, existing.id],
-            (err3) => {
-              if (err3) console.error(err3);
-              res.redirect('/my-shifts');
-            }
-          );
-        } else {
-          db.run(
-            'INSERT INTO shift_attendance (shift_id, user_id, clock_in, clock_in_reason) VALUES (?,?,?,?)',
-            [shiftId, user.id, nowIso, clockInReason],
-            (err3) => {
-              if (err3) console.error(err3);
-              res.redirect('/my-shifts');
-            }
-          );
-        }
+  // Check if attendance row already exists
+  db.get(
+    'SELECT id, clock_in FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
+    [shiftId, user.id],
+    (err, existing) => {
+      if (err) {
+        console.error('Error checking attendance row', err);
+        return res.redirect('/my-shifts');
       }
-    );
-  });
-});
 
-// Clock out of a shift
-app.post('/shifts/:id/clock-out', requireLogin, (req, res) => {
-  const user = req.session.user;
-  const shiftId = req.params.id;
-  const reasonFromForm = (req.body.reason || '').trim();
-
-  const now = new Date();
-  const nowIso = now.toISOString();
-
-  const sqlShift = 'SELECT * FROM shifts WHERE id = ? AND user_id = ?';
-  db.get(sqlShift, [shiftId, user.id], (err, shift) => {
-    if (err || !shift) {
-      console.error(err);
-      return res.redirect('/my-shifts');
-    }
-
-    const scheduledEnd = new Date(`${shift.date}T${shift.end_time}:00`);
-
-    const minutesDiffFromEnd = Math.abs(diffMinutes(now, scheduledEnd));
-    const needsReason = minutesDiffFromEnd > 15; // too early or too late
-
-    if (needsReason && !reasonFromForm) {
-      return res.render('shift-reason', {
-        user,
-        shift,
-        action: 'clock-out',
-        error: null,
-      });
-    }
-
-    const clockOutReason = needsReason ? reasonFromForm : null;
-
-    db.get(
-      'SELECT id FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
-      [shiftId, user.id],
-      (err2, existing) => {
-        if (err2 || !existing) {
-          // If no existing row, create one with clock_out only
-          if (err2) console.error(err2);
-          return db.run(
-            'INSERT INTO shift_attendance (shift_id, user_id, clock_out, clock_out_reason) VALUES (?,?,?,?)',
-            [shiftId, user.id, nowIso, clockOutReason],
-            (err3) => {
-              if (err3) console.error(err3);
-              res.redirect('/my-shifts');
-            }
-          );
-        }
-
+      if (existing) {
+        // Only set clock_in if it is still null
         db.run(
-          'UPDATE shift_attendance SET clock_out = ?, clock_out_reason = ? WHERE id = ?',
-          [nowIso, clockOutReason, existing.id],
-          (err3) => {
-            if (err3) console.error(err3);
-            res.redirect('/my-shifts');
+          'UPDATE shift_attendance SET clock_in = COALESCE(clock_in, ?) WHERE id = ?',
+          [nowIso, existing.id],
+          (err2) => {
+            if (err2) console.error('Error updating clock_in', err2);
+            return res.redirect('/my-shifts');
+          }
+        );
+      } else {
+        // Create new attendance row
+        db.run(
+          'INSERT INTO shift_attendance (shift_id, user_id, clock_in) VALUES (?,?,?)',
+          [shiftId, user.id, nowIso],
+          (err2) => {
+            if (err2) console.error('Error inserting clock_in', err2);
+            return res.redirect('/my-shifts');
           }
         );
       }
-    );
-  });
+    }
+  );
 });
 
+// Worker: clock out of a shift
+app.post('/shifts/:id/clock-out', requireLogin, (req, res) => {
+  const user = req.session.user;
+  const shiftId = req.params.id;
+  const nowIso = new Date().toISOString();
 
-// Update shift status (worker) - POST
+  db.get(
+    'SELECT id, clock_out FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
+    [shiftId, user.id],
+    (err, existing) => {
+      if (err) {
+        console.error('Error checking attendance row', err);
+        return res.redirect('/my-shifts');
+      }
+
+      if (existing) {
+        db.run(
+          'UPDATE shift_attendance SET clock_out = COALESCE(clock_out, ?) WHERE id = ?',
+          [nowIso, existing.id],
+          (err2) => {
+            if (err2) console.error('Error updating clock_out', err2);
+            return res.redirect('/my-shifts');
+          }
+        );
+      } else {
+        db.run(
+          'INSERT INTO shift_attendance (shift_id, user_id, clock_out) VALUES (?,?,?)',
+          [shiftId, user.id, nowIso],
+          (err2) => {
+            if (err2) console.error('Error inserting clock_out', err2);
+            return res.redirect('/my-shifts');
+          }
+        );
+      }
+    }
+  );
+});
+
+// Worker: update shift status (assigned/completed/cancelled)
 app.post('/my-shifts/update-status', requireLogin, (req, res) => {
   const user = req.session.user;
   const { shift_id, status } = req.body;
@@ -380,15 +296,17 @@ app.post('/my-shifts/update-status', requireLogin, (req, res) => {
   );
 });
 
+/* ========================================================
+   AUTH & HOME
+   ======================================================== */
 
-// Home / Landing (identify user type)
+// Home / Landing
 app.get('/', (req, res) => {
   res.render('home');
 });
 
 // Register form
 app.get('/register', (req, res) => {
-  // role from query, e.g. /register?role=manager
   const presetRole = req.query.role || '';
   res.render('register', { error: null, presetRole });
 });
@@ -407,14 +325,19 @@ app.post('/register', async (req, res) => {
   } = req.body;
 
   if (!name || !email || !password || !role) {
-    return res.render('register', { error: 'Please fill in all required fields.', presetRole: role });
+    return res.render('register', {
+      error: 'Please fill in all required fields.',
+      presetRole: role,
+    });
   }
 
   if (!['manager', 'staff', 'nurse'].includes(role)) {
-    return res.render('register', { error: 'Invalid role selected.', presetRole: role });
+    return res.render('register', {
+      error: 'Invalid role selected.',
+      presetRole: role,
+    });
   }
 
-  // If manager, make sure provider name is supplied
   if (role === 'manager' && !provider_name) {
     return res.render('register', {
       error: 'Please provide your care provider name (care home or agency).',
@@ -432,15 +355,20 @@ app.post('/register', async (req, res) => {
     insertUser.run(name, email, passwordHash, role, function (err) {
       if (err) {
         if (err.message.includes('UNIQUE constraint failed: users.email')) {
-          return res.render('register', { error: 'Email already registered.', presetRole: role });
+          return res.render('register', {
+            error: 'Email already registered.',
+            presetRole: role,
+          });
         }
         console.error(err);
-        return res.render('register', { error: 'Something went wrong. Try again.', presetRole: role });
+        return res.render('register', {
+          error: 'Something went wrong. Try again.',
+          presetRole: role,
+        });
       }
 
       const newUserId = this.lastID;
 
-      // If this is a manager, also create a provider record (care home / agency account)
       if (role === 'manager') {
         const insertProvider = db.prepare(
           `
@@ -459,10 +387,8 @@ app.post('/register', async (req, res) => {
           function (err2) {
             if (err2) {
               console.error(err2);
-              // We won't block login, but log the error
             }
 
-            // Auto-login after registration
             req.session.user = {
               id: newUserId,
               name,
@@ -474,7 +400,6 @@ app.post('/register', async (req, res) => {
           }
         );
       } else {
-        // Worker roles (staff / nurse) – no provider created here
         req.session.user = {
           id: newUserId,
           name,
@@ -487,7 +412,10 @@ app.post('/register', async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.render('register', { error: 'Error creating account.', presetRole: role });
+    res.render('register', {
+      error: 'Error creating account.',
+      presetRole: role,
+    });
   }
 });
 
@@ -501,7 +429,9 @@ app.post('/login', (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-    return res.render('login', { error: 'Please enter email and password.' });
+    return res.render('login', {
+      error: 'Please enter email and password.',
+    });
   }
 
   db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
@@ -520,7 +450,6 @@ app.post('/login', (req, res) => {
       return res.render('login', { error: 'Invalid email or password.' });
     }
 
-    // Save user in session
     req.session.user = {
       id: user.id,
       name: user.name,
@@ -532,16 +461,16 @@ app.post('/login', (req, res) => {
   });
 });
 
-// Dashboard (protected)
-// Dashboard (protected)
-// Dashboard (protected)
+/* ========================================================
+   DASHBOARD
+   ======================================================== */
+
 app.get('/dashboard', requireLogin, (req, res) => {
   const user = req.session.user;
   const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
   // MANAGER DASHBOARD
   if (user.role === 'manager') {
-    // Load provider(s) for this manager first
     db.all(
       'SELECT * FROM providers WHERE created_by_user_id = ? ORDER BY created_at DESC',
       [user.id],
@@ -558,7 +487,6 @@ app.get('/dashboard', requireLogin, (req, res) => {
           });
         }
 
-        // Then load shift requests for open shifts this manager created
         const sqlRequests = `
           SELECT
             os.*,
@@ -585,7 +513,6 @@ app.get('/dashboard', requireLogin, (req, res) => {
             });
           }
 
-          // Count how many open shifts are still unfilled
           const sqlOpenCount = `
             SELECT COUNT(*) AS openCount
             FROM open_shifts
@@ -618,10 +545,8 @@ app.get('/dashboard', requireLogin, (req, res) => {
         });
       }
     );
-
-  // WORKER DASHBOARD
   } else {
-    // Next upcoming shift for this worker
+    // WORKER DASHBOARD
     const nextShiftSql = `
       SELECT *
       FROM shifts
@@ -696,55 +621,11 @@ app.get('/dashboard', requireLogin, (req, res) => {
   }
 });
 
+/* ========================================================
+   MANAGER: ASSIGN SHIFTS & VIEW SHIFTS
+   ======================================================== */
 
-// Update shift status (worker) - POST
-app.post('/my-shifts/update-status', requireLogin, (req, res) => {
-  const user = req.session.user;
-  const { shift_id, status } = req.body;
-
-  const allowedStatuses = ['assigned', 'completed', 'cancelled'];
-
-  if (!shift_id || !status || !allowedStatuses.includes(status)) {
-    return res.redirect('/my-shifts');
-  }
-
-  // First, load the shift to check ownership + current status
-  db.get(
-    'SELECT id, user_id, status FROM shifts WHERE id = ?',
-    [shift_id],
-    (err, shift) => {
-      if (err) {
-        console.error(err);
-        return res.redirect('/my-shifts');
-      }
-
-      // No such shift or not owned by this user
-      if (!shift || shift.user_id !== user.id) {
-        return res.redirect('/my-shifts');
-      }
-
-      // If already cancelled, do NOT allow changes
-      if (shift.status === 'cancelled') {
-        return res.redirect('/my-shifts');
-      }
-
-      // Otherwise, allow update
-      const stmt = db.prepare(
-        'UPDATE shifts SET status = ? WHERE id = ? AND user_id = ?'
-      );
-
-      stmt.run(status, shift_id, user.id, (err2) => {
-        if (err2) {
-          console.error(err2);
-        }
-        return res.redirect('/my-shifts');
-      });
-    }
-  );
-});
-
-
-// Assign shift (GET) - manager view
+// Assign shift (GET)
 app.get('/assign-shift', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -752,7 +633,6 @@ app.get('/assign-shift', requireLogin, (req, res) => {
     return res.status(403).send('Only managers can assign shifts.');
   }
 
-  // Load all workers (staff + nurses)
   db.all(
     "SELECT id, name, role, email FROM users WHERE role IN ('staff', 'nurse') ORDER BY name",
     [],
@@ -785,11 +665,10 @@ app.post('/assign-shift', requireLogin, (req, res) => {
     return res.status(403).send('Only managers can assign shifts.');
   }
 
-  const { worker_id, date, start_time, end_time, location, role, notes} = req.body;
+  const { worker_id, date, start_time, end_time, location, role, notes } = req.body;
 
-  if (!worker_id || !date || !start_time || !end_time) {
-    // Reload workers and show error
-    return db.all(
+  const renderWithWorkers = (errorMsg, successMsg) => {
+    db.all(
       "SELECT id, name, role, email FROM users WHERE role IN ('staff', 'nurse') ORDER BY name",
       [],
       (err, workers) => {
@@ -798,7 +677,7 @@ app.post('/assign-shift', requireLogin, (req, res) => {
           return res.render('assign-shift', {
             user,
             workers: [],
-            error: 'Could not load workers.',
+            error: errorMsg || 'Could not load workers.',
             success: null,
           });
         }
@@ -806,14 +685,21 @@ app.post('/assign-shift', requireLogin, (req, res) => {
         return res.render('assign-shift', {
           user,
           workers,
-          error: 'Please fill in all required fields (worker, date, start and end time).',
-          success: null,
+          error: errorMsg,
+          success: successMsg,
         });
       }
     );
+  };
+
+  if (!worker_id || !date || !start_time || !end_time) {
+    return renderWithWorkers(
+      'Please fill in all required fields (worker, date, start and end time).',
+      null
+    );
   }
 
-    const stmt = db.prepare(
+  const stmt = db.prepare(
     `
     INSERT INTO shifts (
       user_id, date, start_time, end_time, location, role, status, notes, created_by_user_id
@@ -835,84 +721,15 @@ app.post('/assign-shift', requireLogin, (req, res) => {
     (err) => {
       if (err) {
         console.error(err);
-        return db.all(
-          "SELECT id, name, role, email FROM users WHERE role IN ('staff', 'nurse') ORDER BY name",
-          [],
-          (err2, workers) => {
-            if (err2) {
-              console.error(err2);
-              return res.render('assign-shift', {
-                user,
-                workers: [],
-                error: 'Could not save shift.',
-                success: null,
-              });
-            }
-
-            return res.render('assign-shift', {
-              user,
-              workers,
-              error: 'Could not save shift.',
-              success: null,
-            });
-          }
-        );
+        return renderWithWorkers('Could not save shift.', null);
       }
 
-      // On success, reload workers and show success message
-      db.all(
-        "SELECT id, name, role, email FROM users WHERE role IN ('staff', 'nurse') ORDER BY name",
-        [],
-        (err2, workers) => {
-          if (err2) {
-            console.error(err2);
-            return res.render('assign-shift', {
-              user,
-              workers: [],
-              error: 'Shift saved, but could not reload workers.',
-              success: null,
-            });
-          }
-
-          return res.render('assign-shift', {
-            user,
-            workers,
-            error: null,
-            success: 'Shift assigned successfully.',
-          });
-        }
-      );
+      return renderWithWorkers(null, 'Shift assigned successfully.');
     }
   );
+});
 
-
-      // On success, reload workers and show success message
-      db.all(
-        "SELECT id, name, role, email FROM users WHERE role IN ('staff', 'nurse') ORDER BY name",
-        [],
-        (err2, workers) => {
-          if (err2) {
-            console.error(err2);
-            return res.render('assign-shift', {
-              user,
-              workers: [],
-              error: 'Shift saved, but could not reload workers.',
-              success: null,
-            });
-          }
-
-          return res.render('assign-shift', {
-            user,
-            workers,
-            error: null,
-            success: 'Shift assigned successfully.',
-          });
-        }
-      );
-    }
-  );
-;
-// Manager shifts list - see all shifts they assigned (with filters)
+// Manager shifts list
 app.get('/manager-shifts', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -921,7 +738,6 @@ app.get('/manager-shifts', requireLogin, (req, res) => {
   }
 
   const { status, date_from, date_to } = req.query;
-
   const allowedStatuses = ['assigned', 'completed', 'cancelled'];
 
   let sql = `
@@ -977,6 +793,7 @@ app.get('/manager-shifts', requireLogin, (req, res) => {
     });
   });
 });
+
 // Manager cancels a shift
 app.post('/manager-shifts/cancel', requireLogin, (req, res) => {
   const user = req.session.user;
@@ -986,7 +803,6 @@ app.post('/manager-shifts/cancel', requireLogin, (req, res) => {
   }
 
   const { shift_id } = req.body;
-
   if (!shift_id) {
     return res.redirect('/manager-shifts');
   }
@@ -999,11 +815,14 @@ app.post('/manager-shifts/cancel', requireLogin, (req, res) => {
     if (err) {
       console.error(err);
     }
-    // For simplicity, just go back to the list (filters are reset)
     res.redirect('/manager-shifts');
   });
 });
-// Weekly rota view (manager)
+
+/* ========================================================
+   WEEKLY ROTA
+   ======================================================== */
+
 app.get('/rota-week', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -1013,7 +832,6 @@ app.get('/rota-week', requireLogin, (req, res) => {
 
   const { week_start } = req.query;
 
-  // Helper to format date as YYYY-MM-DD
   function formatDate(d) {
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1024,26 +842,30 @@ app.get('/rota-week', requireLogin, (req, res) => {
   let startDateStr;
 
   if (week_start) {
-    // Assume week_start is already in YYYY-MM-DD
     startDateStr = week_start;
   } else {
-    // Default: current week's Monday
     const today = new Date();
-    const day = today.getDay(); // 0 = Sunday, 1 = Monday, ...
+    const day = today.getDay(); // 0 = Sunday
     const diffToMonday = (day + 6) % 7; // days since Monday
     const monday = new Date(today);
     monday.setDate(today.getDate() - diffToMonday);
     startDateStr = formatDate(monday);
   }
 
-  // Calculate end date (6 days after start)
   const startDate = new Date(startDateStr);
   const endDate = new Date(startDate);
   endDate.setDate(startDate.getDate() + 6);
   const endDateStr = formatDate(endDate);
 
-  // Build array of the 7 days for the view
-  const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const dayNames = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(startDate);
@@ -1089,6 +911,10 @@ app.get('/rota-week', requireLogin, (req, res) => {
     });
   });
 });
+
+/* ========================================================
+   OPEN SHIFTS / MARKETPLACE
+   ======================================================== */
 
 // Manager: view and create open shifts
 app.get('/open-shifts/manage', requireLogin, (req, res) => {
@@ -1161,7 +987,8 @@ app.post('/open-shifts/manage', requireLogin, (req, res) => {
     }
   );
 });
-// Worker: view open shifts to find extra work
+
+// Worker: view open shifts (find extra work)
 app.get('/open-shifts', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -1195,8 +1022,7 @@ app.get('/open-shifts', requireLogin, (req, res) => {
   });
 });
 
-// Worker: claim an open shift (creates a real shift)
-// Worker: claim an open shift (request, manager must approve)
+// Worker: claim an open shift (request approval)
 app.post('/open-shifts/claim', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -1209,7 +1035,6 @@ app.post('/open-shifts/claim', requireLogin, (req, res) => {
     return res.redirect('/open-shifts');
   }
 
-  // Load the open shift, make sure it's still open
   db.get(
     `SELECT * FROM open_shifts WHERE id = ? AND status = 'open'`,
     [open_shift_id],
@@ -1220,11 +1045,9 @@ app.post('/open-shifts/claim', requireLogin, (req, res) => {
       }
 
       if (!os) {
-        // Shift no longer open
         return res.redirect('/open-shifts');
       }
 
-      // Mark the open shift as "requested" by this worker.
       const updateOpen = db.prepare(`
         UPDATE open_shifts
         SET status = 'requested',
@@ -1237,12 +1060,12 @@ app.post('/open-shifts/claim', requireLogin, (req, res) => {
         if (err2) {
           console.error(err2);
         }
-        // After requesting, stay on open shifts page (it will disappear from list)
         res.redirect('/open-shifts');
       });
     }
   );
 });
+
 // Manager: approve a worker's request for an open shift
 app.post('/open-shifts/approve', requireLogin, (req, res) => {
   const user = req.session.user;
@@ -1256,7 +1079,6 @@ app.post('/open-shifts/approve', requireLogin, (req, res) => {
     return res.redirect('/open-shifts/manage');
   }
 
-  // Load the requested open shift
   db.get(
     `SELECT * FROM open_shifts WHERE id = ? AND status = 'requested'`,
     [open_shift_id],
@@ -1267,11 +1089,9 @@ app.post('/open-shifts/approve', requireLogin, (req, res) => {
       }
 
       if (!os || !os.assigned_user_id) {
-        // Nothing to approve
         return res.redirect('/open-shifts/manage');
       }
 
-      // Create a real shift for the worker
       const insertShift = db.prepare(`
         INSERT INTO shifts (
           user_id, date, start_time, end_time, location, role, status, notes, created_by_user_id
@@ -1294,7 +1114,6 @@ app.post('/open-shifts/approve', requireLogin, (req, res) => {
             return res.redirect('/open-shifts/manage');
           }
 
-          // Mark open shift as approved
           const updateOpen = db.prepare(`
             UPDATE open_shifts
             SET status = 'approved'
@@ -1342,6 +1161,9 @@ app.post('/open-shifts/reject', requireLogin, (req, res) => {
   });
 });
 
+/* ========================================================
+   WORKER DOCUMENTS & MANAGER REVIEW
+   ======================================================== */
 
 // Worker: profile & documents
 app.get('/profile-documents', requireLogin, (req, res) => {
@@ -1402,6 +1224,7 @@ app.post(
     });
   }
 );
+
 // Manager: review documents
 app.get('/documents-review', requireLogin, (req, res) => {
   const user = req.session.user;
@@ -1497,13 +1320,10 @@ app.post('/documents-review/reject', requireLogin, (req, res) => {
   });
 });
 
-// Logout
-app.get('/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.redirect('/');
-  });
-});
-// Manager: view shift attendance (clock in/out + reasons)
+/* ========================================================
+   MANAGER: ATTENDANCE OVERVIEW
+   ======================================================== */
+
 app.get('/manager/attendance', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -1552,11 +1372,17 @@ app.get('/manager/attendance', requireLogin, (req, res) => {
   });
 });
 
+/* ========================================================
+   LOGOUT & SERVER START
+   ======================================================== */
 
-
-// Choose the port (3000 by default)
+// Logout
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/');
+  });
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
-
