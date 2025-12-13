@@ -68,40 +68,185 @@ function requireLogin(req, res, next) {
   }
   next();
 }
+function diffMinutes(later, earlier) {
+  return Math.round((later - earlier) / 60000);
+}
 // ========================================================
 // Worker: My Shifts (GET + POST) – make sure this exists
 // ========================================================
 
 // My Shifts page (protected) - worker view
+// Worker "My shifts" page
 app.get('/my-shifts', requireLogin, (req, res) => {
   const user = req.session.user;
 
-  // Only staff/nurse should see this page
-  if (!['staff', 'nurse'].includes(user.role)) {
+  if (user.role !== 'staff' && user.role !== 'worker' && user.role !== 'nurse') {
+    // just in case, only workers use this page
     return res.redirect('/dashboard');
   }
 
-  db.all(
-    'SELECT * FROM shifts WHERE user_id = ? ORDER BY date, start_time',
-    [user.id],
-    (err, shifts) => {
-      if (err) {
-        console.error(err);
-        return res.render('my-shifts', {
-          user,
-          shifts: [],
-          error: 'Could not load shifts.',
-        });
-      }
+  const sql = `
+    SELECT
+      s.*,
+      a.clock_in,
+      a.clock_out,
+      a.clock_in_reason,
+      a.clock_out_reason
+    FROM shifts s
+    LEFT JOIN shift_attendance a
+      ON a.shift_id = s.id
+      AND a.user_id = s.user_id
+    WHERE s.user_id = ?
+    ORDER BY s.date, s.start_time
+  `;
 
-      res.render('my-shifts', {
+  db.all(sql, [user.id], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.render('my-shifts', {
         user,
-        shifts,
+        shifts: [],
+        error: 'Could not load your shifts.',
+      });
+    }
+
+    res.render('my-shifts', {
+      user,
+      shifts: rows,
+      error: null,
+    });
+  });
+});
+// Clock in to a shift
+app.post('/shifts/:id/clock-in', requireLogin, (req, res) => {
+  const user = req.session.user;
+  const shiftId = req.params.id;
+  const reasonFromForm = (req.body.reason || '').trim();
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  const sqlShift = 'SELECT * FROM shifts WHERE id = ? AND user_id = ?';
+  db.get(sqlShift, [shiftId, user.id], (err, shift) => {
+    if (err || !shift) {
+      console.error(err);
+      return res.redirect('/my-shifts');
+    }
+
+    // build scheduled start Date from date + start_time (simple version)
+    const scheduledStart = new Date(`${shift.date}T${shift.start_time}:00`);
+
+    const minutesLate = diffMinutes(now, scheduledStart); // positive if late
+    const needsReason = minutesLate > 15;
+
+    // If they are late and haven't given a reason yet, show reason form
+    if (needsReason && !reasonFromForm) {
+      return res.render('shift-reason', {
+        user,
+        shift,
+        action: 'clock-in',
         error: null,
       });
     }
-  );
+
+    const clockInReason = needsReason ? reasonFromForm : null;
+
+    // Check if we already have an attendance row
+    db.get(
+      'SELECT id FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
+      [shiftId, user.id],
+      (err2, existing) => {
+        if (err2) {
+          console.error(err2);
+          return res.redirect('/my-shifts');
+        }
+
+        if (existing) {
+          db.run(
+            'UPDATE shift_attendance SET clock_in = ?, clock_in_reason = ? WHERE id = ?',
+            [nowIso, clockInReason, existing.id],
+            (err3) => {
+              if (err3) console.error(err3);
+              res.redirect('/my-shifts');
+            }
+          );
+        } else {
+          db.run(
+            'INSERT INTO shift_attendance (shift_id, user_id, clock_in, clock_in_reason) VALUES (?,?,?,?)',
+            [shiftId, user.id, nowIso, clockInReason],
+            (err3) => {
+              if (err3) console.error(err3);
+              res.redirect('/my-shifts');
+            }
+          );
+        }
+      }
+    );
+  });
 });
+
+// Clock out of a shift
+app.post('/shifts/:id/clock-out', requireLogin, (req, res) => {
+  const user = req.session.user;
+  const shiftId = req.params.id;
+  const reasonFromForm = (req.body.reason || '').trim();
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  const sqlShift = 'SELECT * FROM shifts WHERE id = ? AND user_id = ?';
+  db.get(sqlShift, [shiftId, user.id], (err, shift) => {
+    if (err || !shift) {
+      console.error(err);
+      return res.redirect('/my-shifts');
+    }
+
+    const scheduledEnd = new Date(`${shift.date}T${shift.end_time}:00`);
+
+    const minutesDiffFromEnd = Math.abs(diffMinutes(now, scheduledEnd));
+    const needsReason = minutesDiffFromEnd > 15; // too early or too late
+
+    if (needsReason && !reasonFromForm) {
+      return res.render('shift-reason', {
+        user,
+        shift,
+        action: 'clock-out',
+        error: null,
+      });
+    }
+
+    const clockOutReason = needsReason ? reasonFromForm : null;
+
+    db.get(
+      'SELECT id FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
+      [shiftId, user.id],
+      (err2, existing) => {
+        if (err2 || !existing) {
+          // If no existing row, create one with clock_out only
+          if (err2) console.error(err2);
+          return db.run(
+            'INSERT INTO shift_attendance (shift_id, user_id, clock_out, clock_out_reason) VALUES (?,?,?,?)',
+            [shiftId, user.id, nowIso, clockOutReason],
+            (err3) => {
+              if (err3) console.error(err3);
+              res.redirect('/my-shifts');
+            }
+          );
+        }
+
+        db.run(
+          'UPDATE shift_attendance SET clock_out = ?, clock_out_reason = ? WHERE id = ?',
+          [nowIso, clockOutReason, existing.id],
+          (err3) => {
+            if (err3) console.error(err3);
+            res.redirect('/my-shifts');
+          }
+        );
+      }
+    );
+  });
+});
+
 
 // Update shift status (worker) - POST
 app.post('/my-shifts/update-status', requireLogin, (req, res) => {
@@ -1328,6 +1473,54 @@ app.post('/documents-review/reject', requireLogin, (req, res) => {
 app.get('/logout', (req, res) => {
   req.session.destroy(() => {
     res.redirect('/');
+  });
+});
+// Manager: view shift attendance (clock in/out + reasons)
+app.get('/manager/attendance', requireLogin, (req, res) => {
+  const user = req.session.user;
+
+  if (user.role !== 'manager') {
+    return res.redirect('/dashboard');
+  }
+
+  const sql = `
+    SELECT
+      s.id AS shift_id,
+      s.date,
+      s.start_time,
+      s.end_time,
+      s.location,
+      u.name  AS worker_name,
+      u.email AS worker_email,
+      a.clock_in,
+      a.clock_out,
+      a.clock_in_reason,
+      a.clock_out_reason
+    FROM shifts s
+    JOIN users u
+      ON s.user_id = u.id
+    LEFT JOIN shift_attendance a
+      ON a.shift_id = s.id
+     AND a.user_id = s.user_id
+    ORDER BY s.date DESC, s.start_time DESC
+    LIMIT 100
+  `;
+
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.render('manager-attendance', {
+        user,
+        attendance: [],
+        error: 'Could not load shift attendance.',
+      });
+    }
+
+    res.render('manager-attendance', {
+      user,
+      attendance: rows,
+      error: null,
+    });
   });
 });
 
