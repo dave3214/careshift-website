@@ -2,52 +2,30 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Shift reason</title>
+  <title>Shift reason - CareShiftAI</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
-<body class="page">
-  <header class="top-nav">
-    <div class="top-nav-inner">
-      <div class="logo">CareShift AI</div>
-      <nav class="top-nav-links">
-        <a href="/dashboard">Dashboard</a>
-        <a href="/logout">Logout</a>
-      </nav>
-    </div>
+<body>
+  <header>
+    <h1>Tell us why</h1>
   </header>
 
-  <main class="main-content">
-    <section class="card">
-      <h1>
-        <% if (action === 'clock-in') { %>
-          Reason for late clock in
-        <% } else { %>
-          Reason for early/late clock out
-        <% } %>
-      </h1>
+  <main>
+    <h2><%= action === 'clock-in' ? 'Clocking in late' : 'Clocking out early/late' %></h2>
+    <p>
+      Shift on <strong><%= shift.date %></strong>,
+      <strong><%= shift.start_time %></strong>–<strong><%= shift.end_time %></strong>,
+      at <strong><%= shift.location %></strong>.
+    </p>
 
-      <p>
-        Shift on <strong><%= shift.date %></strong>,
-        from <strong><%= shift.start_time %></strong> to
-        <strong><%= shift.end_time %></strong>.
-      </p>
+    <form method="POST"
+          action="/shifts/<%= shift.id %>/<%= action === 'clock-in' ? 'clock-in' : 'clock-out' %>">
+      <label for="reason">Please give a brief reason (required):</label>
+      <textarea id="reason" name="reason" rows="4" required></textarea>
 
-      <form method="POST" action="/shifts/<%= shift.id %>/<%= action %>">
-        <label for="reason">Please give a short reason (required):</label>
-        <textarea
-          id="reason"
-          name="reason"
-          rows="4"
-          required
-          style="width:100%;"
-        ></textarea>
-
-        <div style="margin-top:1rem;">
-          <button type="submit" class="btn-primary">Submit reason</button>
-          <a href="/my-shifts" class="btn-secondary">Cancel</a>
-        </div>
-      </form>
-    </section>
+      <button type="submit" class="btn-primary">Submit reason &amp; continue</button>
+      <a href="/my-shifts" class="link-secondary">Cancel</a>
+    </form>
   </main>
 </body>
 </html>

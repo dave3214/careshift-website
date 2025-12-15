@@ -66,6 +66,9 @@ function requireLogin(req, res, next) {
   }
   next();
 }
+function diffMinutes(later, earlier) {
+  return Math.round((later - earlier) / 60000); // minutes difference
+}
 
 /* ========================================================
    WORKER: MY SHIFTS + ATTENDANCE + STATUS
@@ -114,82 +117,138 @@ app.get('/my-shifts', requireLogin, (req, res) => {
 });
 
 // Worker: clock in to a shift
+// Worker: clock in to a shift (with optional reason if late)
 app.post('/shifts/:id/clock-in', requireLogin, (req, res) => {
   const user = req.session.user;
   const shiftId = req.params.id;
-  const nowIso = new Date().toISOString();
+  const reasonFromForm = (req.body.reason || '').trim();
 
-  // Check if attendance row already exists
-  db.get(
-    'SELECT id, clock_in FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
-    [shiftId, user.id],
-    (err, existing) => {
-      if (err) {
-        console.error('Error checking attendance row', err);
-        return res.redirect('/my-shifts');
-      }
+  const now = new Date();
+  const nowIso = now.toISOString();
 
-      if (existing) {
-        // Only set clock_in if it is still null
-        db.run(
-          'UPDATE shift_attendance SET clock_in = COALESCE(clock_in, ?) WHERE id = ?',
-          [nowIso, existing.id],
-          (err2) => {
-            if (err2) console.error('Error updating clock_in', err2);
-            return res.redirect('/my-shifts');
-          }
-        );
-      } else {
-        // Create new attendance row
-        db.run(
-          'INSERT INTO shift_attendance (shift_id, user_id, clock_in) VALUES (?,?,?)',
-          [shiftId, user.id, nowIso],
-          (err2) => {
-            if (err2) console.error('Error inserting clock_in', err2);
-            return res.redirect('/my-shifts');
-          }
-        );
-      }
+  // Load the shift to calculate lateness
+  db.get('SELECT * FROM shifts WHERE id = ? AND user_id = ?', [shiftId, user.id], (err, shift) => {
+    if (err || !shift) {
+      if (err) console.error('Error loading shift for clock-in', err);
+      return res.redirect('/my-shifts');
     }
-  );
+
+    // scheduled start time (local server time – good enough for coursework)
+    const scheduledStart = new Date(`${shift.date}T${shift.start_time}:00`);
+
+    const minutesLate = diffMinutes(now, scheduledStart); // positive if late
+    const needsReason = minutesLate > 15;                 // > 15 mins late
+
+    // If they ARE late and have not provided a reason yet → show reason form
+    if (needsReason && !reasonFromForm) {
+      return res.render('shift-reason', {
+        user,
+        shift,
+        action: 'clock-in',
+        error: null,
+      });
+    }
+
+    const clockInReason = needsReason ? reasonFromForm : null;
+
+    // Check if attendance row already exists
+    db.get(
+      'SELECT id, clock_in FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
+      [shiftId, user.id],
+      (err2, existing) => {
+        if (err2) {
+          console.error('Error checking attendance row (clock-in)', err2);
+          return res.redirect('/my-shifts');
+        }
+
+        if (existing) {
+          // Only set clock_in / reason if clock_in is still null
+          db.run(
+            'UPDATE shift_attendance SET clock_in = COALESCE(clock_in, ?), clock_in_reason = COALESCE(clock_in_reason, ?) WHERE id = ?',
+            [nowIso, clockInReason, existing.id],
+            (err3) => {
+              if (err3) console.error('Error updating clock_in', err3);
+              return res.redirect('/my-shifts');
+            }
+          );
+        } else {
+          // Create new attendance row
+          db.run(
+            'INSERT INTO shift_attendance (shift_id, user_id, clock_in, clock_in_reason) VALUES (?,?,?,?)',
+            [shiftId, user.id, nowIso, clockInReason],
+            (err3) => {
+              if (err3) console.error('Error inserting clock_in', err3);
+              return res.redirect('/my-shifts');
+            }
+          );
+        }
+      }
+    );
+  });
 });
 
-// Worker: clock out of a shift
+// Worker: clock out of a shift (with optional reason if early/very late)
 app.post('/shifts/:id/clock-out', requireLogin, (req, res) => {
   const user = req.session.user;
   const shiftId = req.params.id;
-  const nowIso = new Date().toISOString();
+  const reasonFromForm = (req.body.reason || '').trim();
 
-  db.get(
-    'SELECT id, clock_out FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
-    [shiftId, user.id],
-    (err, existing) => {
-      if (err) {
-        console.error('Error checking attendance row', err);
-        return res.redirect('/my-shifts');
-      }
+  const now = new Date();
+  const nowIso = now.toISOString();
 
-      if (existing) {
-        db.run(
-          'UPDATE shift_attendance SET clock_out = COALESCE(clock_out, ?) WHERE id = ?',
-          [nowIso, existing.id],
-          (err2) => {
-            if (err2) console.error('Error updating clock_out', err2);
-            return res.redirect('/my-shifts');
-          }
-        );
-      } else {
-        db.run(
-          'INSERT INTO shift_attendance (shift_id, user_id, clock_out) VALUES (?,?,?)',
-          [shiftId, user.id, nowIso],
-          (err2) => {
-            if (err2) console.error('Error inserting clock_out', err2);
-            return res.redirect('/my-shifts');
-          }
-        );
-      }
+  db.get('SELECT * FROM shifts WHERE id = ? AND user_id = ?', [shiftId, user.id], (err, shift) => {
+    if (err || !shift) {
+      if (err) console.error('Error loading shift for clock-out', err);
+      return res.redirect('/my-shifts');
     }
-  );
+
+    const scheduledEnd = new Date(`${shift.date}T${shift.end_time}:00`);
+
+    const minutesDiffFromEnd = Math.abs(diffMinutes(now, scheduledEnd));
+    const needsReason = minutesDiffFromEnd > 15; // > 15 mins early or late
+
+    if (needsReason && !reasonFromForm) {
+      return res.render('shift-reason', {
+        user,
+        shift,
+        action: 'clock-out',
+        error: null,
+      });
+    }
+
+    const clockOutReason = needsReason ? reasonFromForm : null;
+
+    db.get(
+      'SELECT id, clock_out FROM shift_attendance WHERE shift_id = ? AND user_id = ?',
+      [shiftId, user.id],
+      (err2, existing) => {
+        if (err2) {
+          console.error('Error checking attendance row (clock-out)', err2);
+          return res.redirect('/my-shifts');
+        }
+
+        if (existing) {
+          db.run(
+            'UPDATE shift_attendance SET clock_out = COALESCE(clock_out, ?), clock_out_reason = COALESCE(clock_out_reason, ?) WHERE id = ?',
+            [nowIso, clockOutReason, existing.id],
+            (err3) => {
+              if (err3) console.error('Error updating clock_out', err3);
+              return res.redirect('/my-shifts');
+            }
+          );
+        } else {
+          db.run(
+            'INSERT INTO shift_attendance (shift_id, user_id, clock_out, clock_out_reason) VALUES (?,?,?,?)',
+            [shiftId, user.id, nowIso, clockOutReason],
+            (err3) => {
+              if (err3) console.error('Error inserting clock_out', err3);
+              return res.redirect('/my-shifts');
+            }
+          );
+        }
+      }
+    );
+  });
 });
 
 // Worker: update shift status (assigned/completed/cancelled)
