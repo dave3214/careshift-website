@@ -1,10 +1,27 @@
-// db.js
-// Chooses between SQLite (local) and Postgres (Render) based on DATABASE_URL
+// db.js  (Postgres)
+const { Pool } = require('pg');
 
-if (process.env.DATABASE_URL) {
-  console.log('Using Postgres database (DATABASE_URL is set)');
-  module.exports = require('./db-postgres');
-} else {
-  console.log('Using SQLite database (no DATABASE_URL found)');
-  module.exports = require('./db-sqlite');
-}
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+module.exports = {
+  // Basic query helper
+  query: (text, params) => pool.query(text, params),
+
+  // Optional: SQLite-style helpers used elsewhere in your app
+  all: async (text, params = []) => {
+    const result = await pool.query(text, params);
+    return result.rows;
+  },
+
+  get: async (text, params = []) => {
+    const result = await pool.query(text, params);
+    return result.rows[0] || null;
+  },
+
+  run: async (text, params = []) => {
+    await pool.query(text, params);
+  },
+};

@@ -359,6 +359,17 @@ app.get('/register', (req, res) => {
 // Handle registration (with profile photo + address for staff/nurse)
 // Handle registration
 // Handle registration (Postgres)
+// ===============================
+// AUTH ROUTES (REGISTER + LOGIN)
+// ===============================
+
+// Show registration form
+app.get('/register', (req, res) => {
+  const presetRole = req.query.role || '';
+  res.render('register', { error: null, presetRole });
+});
+
+// Handle registration
 app.post('/register', async (req, res) => {
   const {
     name,
@@ -373,7 +384,7 @@ app.post('/register', async (req, res) => {
     street_name,
     city,
     postcode,
-    profile_photo_url, // if you are sending this from the form; otherwise set null below
+    profile_photo_url, // if you ever send this directly from the form
   } = req.body;
 
   // Basic validation
@@ -391,7 +402,7 @@ app.post('/register', async (req, res) => {
     });
   }
 
-  // If manager, ensure provider name present
+  // If manager, provider name must be present
   if (role === 'manager' && !provider_name) {
     return res.render('register', {
       error: 'Please provide your care provider / agency name.',
@@ -403,7 +414,7 @@ app.post('/register', async (req, res) => {
     const bcrypt = require('bcryptjs');
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // ---------- 1) Insert user ----------
+    // 1) Insert user
     const insertUserSql = `
       INSERT INTO users (
         name,
@@ -420,7 +431,7 @@ app.post('/register', async (req, res) => {
       RETURNING id, name, email, role
     `;
 
-    const profilePhotoUrlValue = profile_photo_url || null; // or build from uploaded file if using multer
+    const profilePhotoUrlValue = profile_photo_url || null; // if not using yet, this will just be NULL
 
     const userResult = await db.query(insertUserSql, [
       name,
@@ -436,7 +447,7 @@ app.post('/register', async (req, res) => {
 
     const newUser = userResult.rows[0];
 
-    // ---------- 2) If manager, create provider ----------
+    // 2) If manager, create provider row
     if (role === 'manager') {
       const insertProviderSql = `
         INSERT INTO providers (
@@ -458,7 +469,7 @@ app.post('/register', async (req, res) => {
       ]);
     }
 
-    // ---------- 3) Log the user in via session ----------
+    // 3) Log user in via session
     req.session.user = {
       id: newUser.id,
       name: newUser.name,
@@ -469,9 +480,9 @@ app.post('/register', async (req, res) => {
     return res.redirect('/dashboard');
   } catch (err) {
     console.error('Error during registration:', err);
-    // Handle unique email error nicely
+
+    // Unique email error in Postgres
     if (err.code === '23505') {
-      // unique_violation in Postgres
       return res.render('register', {
         error: 'Email already registered.',
         presetRole: role,
@@ -485,51 +496,50 @@ app.post('/register', async (req, res) => {
   }
 });
 
-
-// Login form
+// Show login form
 app.get('/login', (req, res) => {
   res.render('login', { error: null });
 });
 
 // Handle login
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
     return res.render('login', { error: 'Please enter email and password.' });
   }
 
-  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
-    if (err) {
-      console.error(err);
-      return res.render('login', { error: 'Something went wrong.' });
-    }
+  try {
+    // Look up user by email
+    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
 
     if (!user) {
       return res.render('login', { error: 'Invalid email or password.' });
     }
 
+    const bcrypt = require('bcryptjs');
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
       return res.render('login', { error: 'Invalid email or password.' });
     }
 
+    // Save to session
     req.session.user = {
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
-      house_number: user.house_number || null,
-      street_name: user.street_name || null,
-      city: user.city || null,
-      postcode: user.postcode || null,
-      profile_photo: user.profile_photo || null,
     };
 
     res.redirect('/dashboard');
-  });
+  } catch (err) {
+    console.error('Error during login:', err);
+    return res.render('login', { error: 'Something went wrong.' });
+  }
 });
+
 
 // -----------------------------
 // Dashboard (manager & worker)
