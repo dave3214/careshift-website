@@ -358,7 +358,8 @@ app.get('/register', (req, res) => {
 
 // Handle registration (with profile photo + address for staff/nurse)
 // Handle registration
-app.post('/register', upload.single('profile_photo'), async (req, res) => {
+// Handle registration (Postgres)
+app.post('/register', async (req, res) => {
   const {
     name,
     email,
@@ -372,138 +373,114 @@ app.post('/register', upload.single('profile_photo'), async (req, res) => {
     street_name,
     city,
     postcode,
+    profile_photo_url, // if you are sending this from the form; otherwise set null below
   } = req.body;
 
-  const presetRole = role || '';
-
-  // Basic checks
+  // Basic validation
   if (!name || !email || !password || !role) {
     return res.render('register', {
       error: 'Please fill in all required fields.',
-      presetRole,
+      presetRole: role,
     });
   }
 
   if (!['manager', 'staff', 'nurse'].includes(role)) {
     return res.render('register', {
       error: 'Invalid role selected.',
-      presetRole,
+      presetRole: role,
     });
   }
 
-  // Managers must enter provider name
+  // If manager, ensure provider name present
   if (role === 'manager' && !provider_name) {
     return res.render('register', {
-      error: 'Please provide your care provider name (care home or agency).',
-      presetRole,
+      error: 'Please provide your care provider / agency name.',
+      presetRole: role,
     });
   }
 
-  // Staff / nurse must provide full address
-  if (role !== 'manager') {
-    if (!house_number || !street_name || !city || !postcode) {
-      return res.render('register', {
-        error: 'Please enter your full address (house number, street, city, postcode).',
-        presetRole,
-      });
-    }
-  }
-
-  // If a profile photo was uploaded, store its path
-  const profilePhotoPath = req.file ? '/uploads/' + req.file.filename : null;
-
   try {
+    const bcrypt = require('bcryptjs');
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const insertUser = db.prepare(
-      `INSERT INTO users (
-         name,
-         email,
-         password_hash,
-         role,
-         profile_photo_path,
-         house_number,
-         street_name,
-         city,
-         postcode
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
+    // ---------- 1) Insert user ----------
+    const insertUserSql = `
+      INSERT INTO users (
+        name,
+        email,
+        password_hash,
+        role,
+        house_number,
+        street_name,
+        city,
+        postcode,
+        profile_photo_url
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING id, name, email, role
+    `;
 
-    insertUser.run(
+    const profilePhotoUrlValue = profile_photo_url || null; // or build from uploaded file if using multer
+
+    const userResult = await db.query(insertUserSql, [
       name,
       email,
       passwordHash,
       role,
-      profilePhotoPath,
-      role === 'manager' ? null : house_number,
-      role === 'manager' ? null : street_name,
-      role === 'manager' ? null : city,
-      role === 'manager' ? null : postcode,
-      function (err) {
-        if (err) {
-          if (err.message.includes('UNIQUE constraint failed: users.email')) {
-            return res.render('register', {
-              error: 'Email already registered.',
-              presetRole,
-            });
-          }
-          console.error(err);
-          return res.render('register', {
-            error: 'Something went wrong. Try again.',
-            presetRole,
-          });
-        }
+      house_number || null,
+      street_name || null,
+      city || null,
+      postcode || null,
+      profilePhotoUrlValue,
+    ]);
 
-        const newUserId = this.lastID;
+    const newUser = userResult.rows[0];
 
-        // If manager, create provider row too
-        if (role === 'manager') {
-          const insertProvider = db.prepare(
-            `INSERT INTO providers
-               (name, service_type, locations, roles_skill_mix, created_by_user_id)
-             VALUES (?, ?, ?, ?, ?)`
-          );
+    // ---------- 2) If manager, create provider ----------
+    if (role === 'manager') {
+      const insertProviderSql = `
+        INSERT INTO providers (
+          name,
+          service_type,
+          locations,
+          roles_skill_mix,
+          created_by_user_id
+        )
+        VALUES ($1,$2,$3,$4,$5)
+      `;
 
-          insertProvider.run(
-            provider_name,
-            provider_service_type || null,
-            provider_locations || null,
-            provider_roles_skill_mix || null,
-            newUserId,
-            (err2) => {
-              if (err2) {
-                console.error(err2);
-                // we won't block login if provider insert fails
-              }
+      await db.query(insertProviderSql, [
+        provider_name,
+        provider_service_type || null,
+        provider_locations || null,
+        provider_roles_skill_mix || null,
+        newUser.id,
+      ]);
+    }
 
-              // Auto-login
-              req.session.user = {
-                id: newUserId,
-                name,
-                email,
-                role,
-              };
-              res.redirect('/dashboard');
-            }
-          );
-        } else {
-          // staff / nurse – no provider row
-          req.session.user = {
-            id: newUserId,
-            name,
-            email,
-            role,
-          };
-          res.redirect('/dashboard');
-        }
-      }
-    );
-  } catch (error) {
-    console.error(error);
-    res.render('register', {
-      error: 'Error creating account.',
-      presetRole,
+    // ---------- 3) Log the user in via session ----------
+    req.session.user = {
+      id: newUser.id,
+      name: newUser.name,
+      email: newUser.email,
+      role: newUser.role,
+    };
+
+    return res.redirect('/dashboard');
+  } catch (err) {
+    console.error('Error during registration:', err);
+    // Handle unique email error nicely
+    if (err.code === '23505') {
+      // unique_violation in Postgres
+      return res.render('register', {
+        error: 'Email already registered.',
+        presetRole: role,
+      });
+    }
+
+    return res.render('register', {
+      error: 'Something went wrong. Try again.',
+      presetRole: role,
     });
   }
 });
