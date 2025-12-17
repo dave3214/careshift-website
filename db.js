@@ -1,86 +1,22 @@
-// db.js
-//
-// Unified DB wrapper:
-// - In production (DATABASE_URL set) → use Postgres via pg
-// - In development → use SQLite via sqlite3
-//
-// Exports a "db" object with .get, .all, .run, .prepare
-// compatible with the way server.js currently uses it.
-
+// db.js  (SQLite version)
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-const usePostgres = !!process.env.DATABASE_URL;
+// Main application database file
+const dbFile = path.join(__dirname, 'database.sqlite');
 
-if (usePostgres) {
-  // -----------------------------
-  // Postgres (Render / production)
-  // -----------------------------
-  const { Pool } = require('pg');
-
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-      rejectUnauthorized: false,
-    },
-  });
-
-  // Helper to normalize callback signature to match sqlite3 style
-  function wrapQueryForGet(sql, params, cb) {
-    pool
-      .query(sql, params)
-      .then((res) => cb(null, res.rows[0] || null))
-      .catch((err) => cb(err));
+// Open the database (it will be created automatically if it doesn't exist)
+const db = new sqlite3.Database(dbFile, (err) => {
+  if (err) {
+    console.error('Failed to open SQLite database:', err);
+  } else {
+    console.log('SQLite database opened at', dbFile);
   }
+});
 
-  function wrapQueryForAll(sql, params, cb) {
-    pool
-      .query(sql, params)
-      .then((res) => cb(null, res.rows))
-      .catch((err) => cb(err));
-  }
+// Turn on foreign key support
+db.serialize(() => {
+  db.run('PRAGMA foreign_keys = ON');
+});
 
-  function wrapQueryForRun(sql, params, cb) {
-    // Try to return an id when there is one
-    pool
-      .query(sql, params)
-      .then((res) => {
-        const ctx = {
-          lastID: res.rows && res.rows[0] && res.rows[0].id,
-        };
-        if (cb) cb.call(ctx, null);
-      })
-      .catch((err) => {
-        if (cb) cb(err);
-      });
-  }
-
-  function prepare(sql) {
-    return {
-      run: function (...args) {
-        let cb = null;
-        if (args.length && typeof args[args.length - 1] === 'function') {
-          cb = args.pop();
-        }
-        const params = args;
-        wrapQueryForRun(sql, params, cb);
-      },
-    };
-  }
-
-  module.exports = {
-    get: wrapQueryForGet,
-    all: wrapQueryForAll,
-    run: wrapQueryForRun,
-    prepare,
-  };
-} else {
-  // -----------------------------
-  // SQLite (local development)
-  // -----------------------------
-  const sqlite3 = require('sqlite3').verbose();
-
-  const dbFile = path.join(__dirname, 'database.sqlite');
-  const sqliteDb = new sqlite3.Database(dbFile);
-
-  module.exports = sqliteDb;
-}
+module.exports = db;
