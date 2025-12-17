@@ -19,8 +19,8 @@
       <div class="error-banner"><%= error %></div>
     <% } %>
 
-    <form action="/register" method="POST">
-      <section>
+    <form action="/register" method="post" enctype="multipart/form-data">
+
         <h2>Your details</h2>
 
         <label>
@@ -75,6 +75,22 @@
       </section>
 
       <section>
+              <h2 class="section-title">Profile photo (for staff / nurse)</h2>
+      <p class="section-help">
+        Managers can skip this. Staff and Nurses should upload a clear headshot.
+      </p>
+
+      <div class="form-group">
+        <label for="profile_photo">Upload profile picture</label>
+        <input
+          id="profile_photo"
+          type="file"
+          name="profile_photo"
+          accept="image/*"
+          class="form-control"
+        />
+      </div>
+
         <h2>Address</h2>
 
         <label>

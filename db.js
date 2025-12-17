@@ -1,27 +1,22 @@
-// db.js  (Postgres version)
-const { Pool } = require('pg');
+// db.js  (SQLite version)
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+// Main application database file
+const dbFile = path.join(__dirname, 'database.sqlite');
+
+// Open the database (it will be created automatically if it doesn't exist)
+const db = new sqlite3.Database(dbFile, (err) => {
+  if (err) {
+    console.error('Failed to open SQLite database:', err);
+  } else {
+    console.log('SQLite database opened at', dbFile);
+  }
 });
 
-module.exports = {
-  // Core helper – used everywhere
-  query: (text, params) => pool.query(text, params),
+// Turn on foreign key support
+db.serialize(() => {
+  db.run('PRAGMA foreign_keys = ON');
+});
 
-  // Helpers that behave like the old SQLite functions
-  all: async (text, params = []) => {
-    const result = await pool.query(text, params);
-    return result.rows;
-  },
-
-  get: async (text, params = []) => {
-    const result = await pool.query(text, params);
-    return result.rows[0] || null;
-  },
-
-  run: async (text, params = []) => {
-    await pool.query(text, params);
-  },
-};
+module.exports = db;

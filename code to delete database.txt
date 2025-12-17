@@ -1,0 +1,28 @@
+-- 1) Remove attendance records for these users
+DELETE FROM shift_attendance
+WHERE user_id IN (2, 4, 5);
+
+-- 2) Remove shifts where they are the worker
+DELETE FROM shifts
+WHERE user_id IN (2, 4, 5);
+
+-- 3) Remove shifts they created as manager
+DELETE FROM shifts
+WHERE created_by_user_id IN (2, 4, 5);
+
+-- 4) Remove documents they uploaded
+DELETE FROM documents
+WHERE user_id IN (2, 4, 5);
+
+-- 5) Remove open shifts they created or were assigned to
+DELETE FROM open_shifts
+WHERE created_by_user_id IN (2, 4, 5)
+   OR assigned_user_id IN (2, 4, 5);
+
+-- 6) If any of them are managers who created providers, delete those providers
+DELETE FROM providers
+WHERE created_by_user_id IN (2, 4, 5);
+
+-- 7) Finally, delete the user accounts themselves
+DELETE FROM users
+WHERE id IN (2, 4, 5);

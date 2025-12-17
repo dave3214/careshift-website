@@ -11,9 +11,9 @@ const db = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// -----------------------------
-// File uploads (documents + photos)
-// -----------------------------
+// ----------------------------------------------------
+// File uploads (documents + profile photos)
+// ----------------------------------------------------
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
@@ -30,20 +30,19 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// -----------------------------
+// ----------------------------------------------------
 // View engine & static files
-// -----------------------------
+// ----------------------------------------------------
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 app.use(express.urlencoded({ extended: false }));
 
-// -----------------------------
+// ----------------------------------------------------
 // Sessions
-// -----------------------------
+// ----------------------------------------------------
 app.use(
   session({
     store: new SQLiteStore({ db: 'sessions.sqlite' }),
@@ -62,9 +61,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Helpers / middleware
-// -----------------------------
+// ----------------------------------------------------
 function requireLogin(req, res, next) {
   if (!req.session.user) {
     return res.redirect('/login');
@@ -76,9 +75,9 @@ function diffMinutes(later, earlier) {
   return Math.round((later - earlier) / 60000);
 }
 
-// -----------------------------
+// ----------------------------------------------------
 // Worker: My Shifts + Attendance
-// -----------------------------
+// ----------------------------------------------------
 app.get('/my-shifts', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -343,180 +342,203 @@ app.post('/my-shifts/update-status', requireLogin, (req, res) => {
   );
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Home / Auth
-// -----------------------------
+// ----------------------------------------------------
 app.get('/', (req, res) => {
   res.render('home');
 });
 
-// Register form
-app.get('/register', (req, res) => {
-  const presetRole = req.query.role || '';
-  res.render('register', { error: null, presetRole });
-});
-
-// Handle registration (with profile photo + address for staff/nurse)
-// Handle registration
-// Handle registration (Postgres)
-// ===============================
-// AUTH ROUTES (REGISTER + LOGIN)
-// ===============================
-
-// Show registration form
-// ===============================
-// AUTH ROUTES (REGISTER + LOGIN)
-// ===============================
-
 // Show registration form
 app.get('/register', (req, res) => {
   const presetRole = req.query.role || '';
   res.render('register', { error: null, presetRole });
 });
 
-// Handle registration
-app.post('/register', async (req, res) => {
-  const {
-    name,
-    email,
-    password,
-    role,
-    provider_name,
-    provider_service_type,
-    provider_locations,
-    provider_roles_skill_mix,
-    house_number,
-    street_name,
-    city,
-    postcode,
-  } = req.body;
-
-  // Basic validation
-  if (!name || !email || !password || !role) {
-    return res.render('register', {
-      error: 'Please fill in all required fields.',
-      presetRole: role,
-    });
-  }
-
-  if (!['manager', 'staff', 'nurse'].includes(role)) {
-    return res.render('register', {
-      error: 'Invalid role selected.',
-      presetRole: role,
-    });
-  }
-
-  if (role === 'manager' && !provider_name) {
-    return res.render('register', {
-      error: 'Please provide your care provider / agency name.',
-      presetRole: role,
-    });
-  }
-
-  try {
-    const bcrypt = require('bcryptjs');
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    // 1) Insert user
-    const insertUserSql = `
-      INSERT INTO users (
-        name,
-        email,
-        password_hash,
-        role,
-        house_number,
-        street_name,
-        city,
-        postcode
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      RETURNING id, name, email, role
-    `;
-
-    const userResult = await db.query(insertUserSql, [
+// Handle registration (SQLite + profile photo)
+app.post(
+  '/register',
+  upload.single('profile_photo'), // <-- profile photo upload
+  async (req, res) => {
+    const {
       name,
       email,
-      passwordHash,
+      password,
       role,
-      house_number || null,
-      street_name || null,
-      city || null,
-      postcode || null,
-    ]);
+      provider_name,
+      provider_service_type,
+      provider_locations,
+      provider_roles_skill_mix,
+      house_number,
+      street_name,
+      city,
+      postcode,
+    } = req.body;
 
-    const newUser = userResult.rows[0];
+    const presetRole = role || '';
 
-    // 2) If manager, insert provider row
-    if (role === 'manager') {
-      const insertProviderSql = `
-        INSERT INTO providers (
-          name,
-          service_type,
-          locations,
-          roles_skill_mix,
-          created_by_user_id
-        )
-        VALUES ($1,$2,$3,$4,$5)
-      `;
-
-      await db.query(insertProviderSql, [
-        provider_name,
-        provider_service_type || null,
-        provider_locations || null,
-        provider_roles_skill_mix || null,
-        newUser.id,
-      ]);
-    }
-
-    // 3) Save to session & redirect
-    req.session.user = {
-      id: newUser.id,
-      name: newUser.name,
-      email: newUser.email,
-      role: newUser.role,
-    };
-
-    res.redirect('/dashboard');
-  } catch (err) {
-    console.error('Error during registration:', err);
-
-    // Duplicate email
-    if (err.code === '23505') {
+    // Basic validation
+    if (!name || !email || !password || !role) {
       return res.render('register', {
-        error: 'Email already registered.',
-        presetRole: role,
+        error: 'Please fill in all required fields.',
+        presetRole,
       });
     }
 
-    return res.render('register', {
-      error: 'Something went wrong. Try again.',
-      presetRole: role,
-    });
+    if (!['manager', 'staff', 'nurse'].includes(role)) {
+      return res.render('register', {
+        error: 'Invalid role selected.',
+        presetRole,
+      });
+    }
+
+    if (role === 'manager' && !provider_name) {
+      return res.render('register', {
+        error: 'Please provide your care provider / agency name.',
+        presetRole,
+      });
+    }
+
+    // If a file was uploaded, store its path. Otherwise null.
+    const profilePhotoPath = req.file ? '/uploads/' + req.file.filename : null;
+
+    try {
+      // 1) Check if email already exists
+      db.get('SELECT id FROM users WHERE email = ?', [email], async (err, existing) => {
+        if (err) {
+          console.error('Error checking existing user:', err);
+          return res.render('register', {
+            error: 'Something went wrong. Try again.',
+            presetRole,
+          });
+        }
+
+        if (existing) {
+          return res.render('register', {
+            error: 'Email already registered.',
+            presetRole,
+          });
+        }
+
+        // 2) Hash password
+        const passwordHash = await bcrypt.hash(password, 10);
+
+        // 3) Insert user (including profile_photo_path)
+        const insertUserStmt = db.prepare(`
+          INSERT INTO users (
+            name,
+            email,
+            password_hash,
+            role,
+            house_number,
+            street_name,
+            city,
+            postcode,
+            profile_photo_path
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        insertUserStmt.run(
+          name,
+          email,
+          passwordHash,
+          role,
+          house_number || null,
+          street_name || null,
+          city || null,
+          postcode || null,
+          profilePhotoPath,
+          function (err2) {
+            if (err2) {
+              console.error('Error inserting user:', err2);
+              return res.render('register', {
+                error: 'Something went wrong. Try again.',
+                presetRole,
+              });
+            }
+
+            const newUserId = this.lastID;
+
+            const finishAndRedirect = () => {
+              req.session.user = {
+                id: newUserId,
+                name,
+                email,
+                role,
+                profile_photo_path: profilePhotoPath,
+              };
+              res.redirect('/dashboard');
+            };
+
+            // 4) If manager, insert provider row
+            if (role === 'manager') {
+              const insertProviderStmt = db.prepare(`
+                INSERT INTO providers (
+                  name,
+                  service_type,
+                  locations,
+                  roles_skill_mix,
+                  created_by_user_id
+                )
+                VALUES (?, ?, ?, ?, ?)
+              `);
+
+              insertProviderStmt.run(
+                provider_name,
+                provider_service_type || null,
+                provider_locations || null,
+                provider_roles_skill_mix || null,
+                newUserId,
+                (err3) => {
+                  if (err3) {
+                    console.error('Error inserting provider:', err3);
+                    // still log the user in even if provider insert fails
+                  }
+                  finishAndRedirect();
+                }
+              );
+            } else {
+              finishAndRedirect();
+            }
+          }
+        );
+      });
+    } catch (err) {
+      console.error('Error during registration:', err);
+      return res.render('register', {
+        error: 'Something went wrong. Try again.',
+        presetRole,
+      });
+    }
   }
-});
+);
 
 // Show login form
 app.get('/login', (req, res) => {
   res.render('login', { error: null });
 });
 
-// Handle login
-app.post('/login', async (req, res) => {
+// Handle login (SQLite)
+app.post('/login', (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-    return res.render('login', { error: 'Please enter email and password.' });
+    return res.render('login', {
+      error: 'Please enter email and password.',
+    });
   }
 
-  try {
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    const user = result.rows[0];
+  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+    if (err) {
+      console.error('Error during login lookup:', err);
+      return res.render('login', { error: 'Something went wrong.' });
+    }
 
     if (!user) {
       return res.render('login', { error: 'Invalid email or password.' });
     }
 
-    const bcrypt = require('bcryptjs');
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
@@ -528,20 +550,16 @@ app.post('/login', async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      profile_photo_path: user.profile_photo_path || null,
     };
 
     res.redirect('/dashboard');
-  } catch (err) {
-    console.error('Error during login:', err);
-    return res.render('login', { error: 'Something went wrong.' });
-  }
+  });
 });
 
-
-
-// -----------------------------
+// ----------------------------------------------------
 // Dashboard (manager & worker)
-// -----------------------------
+// ----------------------------------------------------
 app.get('/dashboard', requireLogin, (req, res) => {
   const user = req.session.user;
   const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -695,7 +713,10 @@ app.get('/dashboard', requireLogin, (req, res) => {
     });
   }
 });
+
+// ----------------------------------------------------
 // Manager: view list of workers with photo + address
+// ----------------------------------------------------
 app.get('/manager/workers', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -737,9 +758,9 @@ app.get('/manager/workers', requireLogin, (req, res) => {
   });
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Manager: assign shifts & view shifts
-// -----------------------------
+// ----------------------------------------------------
 app.get('/assign-shift', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -967,9 +988,9 @@ app.post('/manager-shifts/cancel', requireLogin, (req, res) => {
   });
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Weekly rota view (manager)
-// -----------------------------
+// ----------------------------------------------------
 app.get('/rota-week', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -1059,9 +1080,9 @@ app.get('/rota-week', requireLogin, (req, res) => {
   });
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Open shifts (manager + worker)
-// -----------------------------
+// ----------------------------------------------------
 app.get('/open-shifts/manage', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -1304,9 +1325,9 @@ app.post('/open-shifts/reject', requireLogin, (req, res) => {
   });
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Worker documents & manager review
-// -----------------------------
+// ----------------------------------------------------
 // Worker: profile & documents
 app.get('/profile-documents', requireLogin, (req, res) => {
   const sessionUser = req.session.user;
@@ -1360,7 +1381,6 @@ app.get('/profile-documents', requireLogin, (req, res) => {
     });
   });
 });
-
 
 app.post(
   '/profile-documents/upload',
@@ -1486,9 +1506,9 @@ app.post('/documents-review/reject', requireLogin, (req, res) => {
   });
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Manager: attendance overview
-// -----------------------------
+// ----------------------------------------------------
 app.get('/manager/attendance', requireLogin, (req, res) => {
   const user = req.session.user;
 
@@ -1537,18 +1557,18 @@ app.get('/manager/attendance', requireLogin, (req, res) => {
   });
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Logout
-// -----------------------------
+// ----------------------------------------------------
 app.get('/logout', (req, res) => {
   req.session.destroy(() => {
     res.redirect('/');
   });
 });
 
-// -----------------------------
+// ----------------------------------------------------
 // Start server
-// -----------------------------
+// ----------------------------------------------------
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
