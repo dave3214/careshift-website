@@ -364,6 +364,11 @@ app.get('/register', (req, res) => {
 // ===============================
 
 // Show registration form
+// ===============================
+// AUTH ROUTES (REGISTER + LOGIN)
+// ===============================
+
+// Show registration form
 app.get('/register', (req, res) => {
   const presetRole = req.query.role || '';
   res.render('register', { error: null, presetRole });
@@ -384,7 +389,6 @@ app.post('/register', async (req, res) => {
     street_name,
     city,
     postcode,
-    profile_photo_url, // if you ever send this directly from the form
   } = req.body;
 
   // Basic validation
@@ -402,7 +406,6 @@ app.post('/register', async (req, res) => {
     });
   }
 
-  // If manager, provider name must be present
   if (role === 'manager' && !provider_name) {
     return res.render('register', {
       error: 'Please provide your care provider / agency name.',
@@ -424,14 +427,11 @@ app.post('/register', async (req, res) => {
         house_number,
         street_name,
         city,
-        postcode,
-        profile_photo_url
+        postcode
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
       RETURNING id, name, email, role
     `;
-
-    const profilePhotoUrlValue = profile_photo_url || null; // if not using yet, this will just be NULL
 
     const userResult = await db.query(insertUserSql, [
       name,
@@ -442,12 +442,11 @@ app.post('/register', async (req, res) => {
       street_name || null,
       city || null,
       postcode || null,
-      profilePhotoUrlValue,
     ]);
 
     const newUser = userResult.rows[0];
 
-    // 2) If manager, create provider row
+    // 2) If manager, insert provider row
     if (role === 'manager') {
       const insertProviderSql = `
         INSERT INTO providers (
@@ -469,7 +468,7 @@ app.post('/register', async (req, res) => {
       ]);
     }
 
-    // 3) Log user in via session
+    // 3) Save to session & redirect
     req.session.user = {
       id: newUser.id,
       name: newUser.name,
@@ -477,11 +476,11 @@ app.post('/register', async (req, res) => {
       role: newUser.role,
     };
 
-    return res.redirect('/dashboard');
+    res.redirect('/dashboard');
   } catch (err) {
     console.error('Error during registration:', err);
 
-    // Unique email error in Postgres
+    // Duplicate email
     if (err.code === '23505') {
       return res.render('register', {
         error: 'Email already registered.',
@@ -510,7 +509,6 @@ app.post('/login', async (req, res) => {
   }
 
   try {
-    // Look up user by email
     const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
     const user = result.rows[0];
 
@@ -525,7 +523,6 @@ app.post('/login', async (req, res) => {
       return res.render('login', { error: 'Invalid email or password.' });
     }
 
-    // Save to session
     req.session.user = {
       id: user.id,
       name: user.name,
@@ -539,6 +536,7 @@ app.post('/login', async (req, res) => {
     return res.render('login', { error: 'Something went wrong.' });
   }
 });
+
 
 
 // -----------------------------
