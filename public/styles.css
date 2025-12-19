@@ -1102,3 +1102,122 @@ body {
 .btn-link:hover {
   text-decoration: underline;
 }
+/* -------------------------
+   Three-dot About/Contact menu
+   ------------------------- */
+.more-menu {
+  position: relative;
+  display: inline-block;
+  margin-left: 1rem;
+}
+
+.more-btn {
+  background: transparent;
+  border: none;
+  color: #ffffff;          /* matches your white nav text */
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.more-btn:focus {
+  outline: none;
+}
+
+.more-dropdown {
+  position: absolute;
+  right: 0;
+  top: 120%;
+  background: #ffffff;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 150px;
+  display: none;
+  z-index: 1000;
+}
+
+.more-dropdown a {
+  display: block;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #0d2b4c;          /* dark blue to match your brand */
+  text-decoration: none;
+}
+
+.more-dropdown a:hover {
+  background: #f3f5ff;
+}
+
+/* show dropdown when .is-open is added via JS */
+.more-dropdown.is-open {
+  display: block;
+}
+.page-section {
+  padding: 4rem 0;
+}
+
+.page-section--light {
+  background: #f7f9fc;
+}
+
+.page-section h2 {
+  margin-bottom: 1rem;
+}
+
+.contact-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+}
+
+.contact-list li {
+  margin-bottom: 0.5rem;
+}
+/* Generic page section spacing */
+.page-section {
+  padding: 4rem 0;
+}
+
+.page-section--light {
+  background: #f7f9fc;
+}
+
+/* Card layout for About / Contact */
+.info-card-grid {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  display: flex;
+  justify-content: center;
+}
+
+.info-card {
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
+  padding: 2.5rem 2.75rem;
+  max-width: 100%;
+  width: 100%;
+}
+
+.info-card h3 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+.info-card p {
+  margin-bottom: 0.75rem;
+  line-height: 1.6;
+}
+
+.contact-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.contact-list li {
+  margin-bottom: 0.4rem;
+}

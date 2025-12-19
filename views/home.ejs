@@ -24,6 +24,25 @@
         <a href="/register">Register</a>
       </nav>
     </div>
+    <div class="header-actions">
+  <!-- your existing buttons/links (Login, Register, etc.) -->
+
+  <!-- Three-dot menu -->
+  <div class="more-menu">
+    <button class="more-btn" id="moreMenuButton" type="button" aria-label="More">
+      &#8942; <!-- vertical three dots -->
+    </button>
+    <div class="more-dropdown" id="moreDropdown">
+      <!-- If About & Contact are sections on the same page, keep the #about / #contact links -->
+      <a href="#about">About Us</a>
+      <a href="#contact">Contact Us</a>
+      <!-- If they are separate pages instead, use /about and /contact -->
+      <!-- <a href="/about">About Us</a> -->
+      <!-- <a href="/contact">Contact Us</a> -->
+    </div>
+  </div>
+</div>
+
   </header>
 
   <main>
@@ -100,6 +119,51 @@
       </div>
     </section>
   </main>
+  <!-- other scripts (if any) -->
+<script src="/js/main.js"></script>
+</body>
+</html>
+<section id="about">
+  <!-- your About content -->
+</section>
+
+<section id="contact">
+  <!-- your Contact form / details -->
+</section>
+<section id="about-section" class="page-section">
+  <div class="info-card-grid">
+    <article class="info-card">
+      <h3>About Us</h3>
+      <p>
+        CareShift AI is an early prototype designed to help care providers plan staffing,
+        assign shifts, and keep worker compliance visible in one place.
+      </p>
+      <p>
+        This App shows how managers can assign shifts and post open shifts, while
+        workers can claim extra work, track their schedule, and upload compliance
+        documents such as DBS and training certificates.
+      </p>
+    </article>
+  </div>
+</section>
+<section id="contact-section" class="page-section page-section--light">
+  <div class="info-card-grid">
+    <article class="info-card">
+      <h3>Contact Us</h3>
+      <p>
+        New provider or want to talk about CareShift AI? You can reach us here:
+      </p>
+
+      <ul class="contact-list">
+        <li><strong>Email:</strong> <a href="mailto:enwelumnwadavid@gmail.com">enwelumnwadavid@gmail.com</a></li>
+        <li><strong>Phone:</strong> <a href="tel:+447000000000">+44 7826975635</a> <!-- update this number --></li>
+        <li><strong>Address:</strong> <b>Telford, United Kingdom</b></a></li>
+      </ul>
+    </article>
+  </div>
+</section>
+
+
 
   <footer class="site-footer">
     <p>&copy; <%= new Date().getFullYear() %> CareShift AI</p>
